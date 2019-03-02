@@ -24,19 +24,40 @@ const unsigned char opera[] = {0,0,1,2,3,4,5,8,9,0xA,0xB,0xC,0xD,0x10,0x11,0x12,
 const unsigned char voxp[] = {1,2,3,7,8,9,13,17,15,18,14};
 const unsigned int gamme[] = {343,363,385,408,432,458,485,514,544,577,611,647,0};
 
-const int segment = 0x6AF0 - DATA_OFFSET;
+
+uint16_t MUS_OFFSET, INS_OFFSET, SFX_OFFSET, BUZ_OFFSET;
+uint8_t SONG_COUNT, SFX_COUNT;
+uint8_t AUDIOVERSION, AUDIOTYPE; //AUDIOTYPE: 1=TTF/MOK, 2=Blues Brothers
+uint8_t FX_ON;
+uint16_t FX_TIME;
+uint8_t AUDIOTIMING;
+int lastaudiotick;
+uint8_t audiodelay;
+int16_t pointer_diff;
+uint16_t data_offset;
+uint16_t data_size;
+
 
 void insmaker(unsigned char *insdata, int channel);
 void all_vox_zero();
 
-uint8_t getByte(uint16_t offset)
-{
-  return pgm_read_byte_near(music_ttf_dataonly_bin + offset);
-}
-
 void updatechip(int reg, int val)
 {
-  opl2.write(reg, val);
+    opl2.write(reg, val);
+}
+
+uint8_t getByte(uint16_t offset)
+{
+    return getHeaderByte(offset + data_offset);
+}
+
+unsigned int loaduint16(unsigned char c1, unsigned char c2){
+    return (((unsigned int)c1 * 256) & 0xFF00) + (unsigned int)c2;
+}
+
+int loadint16(unsigned char c1, unsigned char c2){
+    short int tmpint = ((short int)c1 << 8) + (short int)c2;
+    return (int)tmpint;
 }
 
 int fillchip(ADLIB_DATA *aad)
@@ -135,7 +156,7 @@ int fillchip(ADLIB_DATA *aad)
                     aad->return_point[i] = aad->pointer[i] + 2;
                     tmp1 = ((unsigned int)getByte(aad->pointer[i] + 1) << 8) & 0xFF00;
                     tmp1 += (unsigned int)getByte(aad->pointer[i]) & 0xFF;
-                    aad->pointer[i] = segment + tmp1;
+                    aad->pointer[i] = tmp1 + pointer_diff;
                     break;
 
                 case 1: //Update loop counter
@@ -148,7 +169,7 @@ int fillchip(ADLIB_DATA *aad)
                         aad->loop_counter[i]--;
                         tmp1 = ((unsigned int)getByte(aad->pointer[i] + 1) << 8) & 0xFF00;
                         tmp1 += (unsigned int)getByte(aad->pointer[i]) & 0xFF;
-                        aad->pointer[i] = segment + tmp1;
+                        aad->pointer[i] = tmp1 + pointer_diff;
                     } else {
                         aad->pointer[i] += 2;
                     }
@@ -161,7 +182,7 @@ int fillchip(ADLIB_DATA *aad)
                 case 4: //Jump
                     tmp1 = ((unsigned int)getByte(aad->pointer[i] + 1) << 8) & 0xFF00;
                     tmp1 += (unsigned int)getByte(aad->pointer[i]) & 0xFF;
-                    aad->pointer[i] = segment + tmp1;
+                    aad->pointer[i] = tmp1 + pointer_diff;
                     break;
 
                 case 15: //Finish
@@ -250,7 +271,38 @@ void insmaker(unsigned char *insdata, int channel)
     updatechip(0xE0 + channel, insdata[4]); //Wave type
 }
 
-int load_data(ADLIB_DATA *aad, int len, int mus_offset, int ins_offset, int song_number)
+void loadOpenTitusHeader()
+{
+    AUDIOVERSION = getHeaderByte(14);
+    AUDIOTYPE = getHeaderByte(15);
+
+    if (AUDIOTYPE == 1) { //TTF/MOK
+        data_offset = loaduint16(getHeaderByte(18 + 1), getHeaderByte(18 + 0));
+        data_size = loaduint16(getHeaderByte(18 + 3), getHeaderByte(18 + 2));
+        pointer_diff = loadint16(getHeaderByte(18 + 6), getHeaderByte(18 + 5));
+        MUS_OFFSET = loaduint16(getHeaderByte(18 + 8), getHeaderByte(18 + 7));
+        INS_OFFSET = loaduint16(getHeaderByte(18 + 10), getHeaderByte(18 + 9));
+        SFX_OFFSET = loaduint16(getHeaderByte(18 + 12), getHeaderByte(18 + 11));
+        BUZ_OFFSET = loaduint16(getHeaderByte(18 + 14), getHeaderByte(18 + 13));
+        SONG_COUNT = getHeaderByte(18 + 15);
+        SFX_COUNT = getHeaderByte(18 + 16);
+    } else if (AUDIOTYPE == 2) { //BB
+        data_offset = loaduint16(getHeaderByte(18 + 1), getHeaderByte(18 + 0));
+        data_size = loaduint16(getHeaderByte(18 + 3), getHeaderByte(18 + 2));
+        pointer_diff = loadint16(getHeaderByte(18 + 6), getHeaderByte(18 + 5));
+        MUS_OFFSET = loaduint16(getHeaderByte(18 + 8), getHeaderByte(18 + 7));
+        SFX_OFFSET = loaduint16(getHeaderByte(18 + 10), getHeaderByte(18 + 9));
+        BUZ_OFFSET = loaduint16(getHeaderByte(18 + 12), getHeaderByte(18 + 11));
+        SONG_COUNT = getHeaderByte(18 + 13);
+        SFX_COUNT = getHeaderByte(18 + 14);
+    }
+    if (SFX_COUNT > ADLIB_SFX_COUNT) {
+        SFX_COUNT = ADLIB_SFX_COUNT;
+    }
+}
+
+
+int load_data(ADLIB_DATA *aad, int song_number)
 {
     int i; //Index
     int j; //Offset to the current offset
@@ -258,25 +310,39 @@ int load_data(ADLIB_DATA *aad, int len, int mus_offset, int ins_offset, int song
     unsigned int tmp1; //Source offset
     unsigned int tmp2; //Next offset
 
+    loadOpenTitusHeader();
+    aad->data_size = data_size;
+
     aad->perc_stat = 0x20;
 
     //Load instruments
-    j = ins_offset;
+    j = INS_OFFSET;
 
-    for (i = 0; i < song_number; i++) {
-        do {
-            j += 2;
-            tmp1 = ((unsigned int)getByte(j) & 0xFF) + (((unsigned int)getByte(j + 1) << 8) & 0xFF00);
-        } while (tmp1 != 0xFFFF);
-        j += 2;
-    }
     all_vox_zero();
+    
+    //Load instruments
+    if (AUDIOTYPE == 1) { //TTF/MOK
+        j = INS_OFFSET;
+        for (i = 0; i < song_number; i++) {
+            do {
+                j += 2;
+                tmp1 = ((unsigned int)getByte(j) & 0xFF) + (((unsigned int)getByte(j + 1) << 8) & 0xFF00);
+            } while (tmp1 != 0xFFFF);
+            j += 2;
+        }
+    } else if (AUDIOTYPE == 2) { //BB
+        j = MUS_OFFSET + song_number * 8 + 2 + pointer_diff;
+        tmp1 = ((unsigned int)getByte(j) & 0xFF) + (((unsigned int)getByte(j + 1) << 8) & 0xFF00);
+        j = tmp1 + pointer_diff;
+    }
+
+    
     tmp2 = ((unsigned int)getByte(j) & 0xFF) + (((unsigned int)getByte(j + 1) << 8) & 0xFF00);
 
     for (i = 0; i < ADLIB_INSTRUMENT_COUNT + 1; i++)
         aad->instrument_data[i].vox = 0xFF; //Init; instrument not in use
 
-    for (i = 0; (i < ADLIB_INSTRUMENT_COUNT + 1) && ((j + 2) < len); i++) {
+    for (i = 0; (i < ADLIB_INSTRUMENT_COUNT + 1) && ((j + 2) < aad->data_size); i++) {
         tmp1 = tmp2;
         tmp2 = ((unsigned int)getByte(j + 2) & 0xFF) + (((unsigned int)getByte(j + 3) << 8) & 0xFF00);
         j += 2;
@@ -288,37 +354,50 @@ int load_data(ADLIB_DATA *aad, int len, int mus_offset, int ins_offset, int song
             continue;
 
         if (i > 14) //Perc instrument (15-18) have an extra byte, melodic (0-14) have not
-            aad->instrument_data[i].vox = getByte((tmp1++) + segment);
+            aad->instrument_data[i].vox = getByte((tmp1++) + pointer_diff);
         else
             aad->instrument_data[i].vox = 0xFE;
 
         for (k = 0; k < 5; k++)
-            aad->instrument_data[i].op[0][k] = getByte((tmp1++) + segment);
+            aad->instrument_data[i].op[0][k] = getByte((tmp1++) + pointer_diff);
 
         for (k = 0; k < 5; k++)
-            aad->instrument_data[i].op[1][k] = getByte((tmp1++) + segment);
+            aad->instrument_data[i].op[1][k] = getByte((tmp1++) + pointer_diff);
 
-        aad->instrument_data[i].fb_alg = getByte(tmp1 + segment);
+        aad->instrument_data[i].fb_alg = getByte(tmp1 + pointer_diff);
 
     }
 
     //Set skip delay
-    aad->skip_delay = tmp1;
-    aad->skip_delay_counter = tmp1;
+    if (AUDIOTYPE == 1) { //TTF/MOK
+        aad->skip_delay = tmp1;
+        aad->skip_delay_counter = tmp1;
+    } else if (AUDIOTYPE == 2) { //BB
+        j = MUS_OFFSET + song_number * 8 + 4 + pointer_diff;
+        tmp1 = ((unsigned int)getByte(j) & 0xFF) + (((unsigned int)getByte(j + 1) << 8) & 0xFF00);
+        aad->skip_delay = tmp1;
+        aad->skip_delay_counter = tmp1;
+    }
 
     //Load music
-    j = mus_offset;
+    j = MUS_OFFSET;
 
-    for (i = 0; i < song_number; i++) {
-        do {
+    if (AUDIOTYPE == 1) { //TTF/MOK
+        for (i = 0; i < song_number; i++) {
+            do {
+                j += 2;
+                tmp1 = ((unsigned int)getByte(j) & 0xFF) + (((unsigned int)getByte(j + 1) << 8) & 0xFF00);
+            } while (tmp1 != 0xFFFF);
             j += 2;
-            tmp1 = ((unsigned int)getByte(j) & 0xFF) + (((unsigned int)getByte(j + 1) << 8) & 0xFF00);
-        } while (tmp1 != 0xFFFF);
-        j += 2;
+        }
+    } else if (AUDIOTYPE == 2) { //BB
+        j = MUS_OFFSET + song_number * 8 + pointer_diff;
+        tmp1 = ((unsigned int)getByte(j) & 0xFF) + (((unsigned int)getByte(j + 1) << 8) & 0xFF00);
+        j = tmp1 + pointer_diff;
     }
 
     aad->cutsong = -1;
-    for (i = 0; (i < ADLIB_DATA_COUNT + 1) && (j < len); i++) {
+    for (i = 0; (i < ADLIB_DATA_COUNT + 1) && (j < aad->data_size); i++) {
         tmp1 = ((unsigned int)getByte(j) & 0xFF) + (((unsigned int)getByte(j + 1) << 8) & 0xFF00);
         aad->cutsong++;
         if (tmp1 == 0xFFFF) //Terminate for loop
@@ -337,7 +416,7 @@ int load_data(ADLIB_DATA *aad, int len, int mus_offset, int ins_offset, int song
         aad->octave[i] = 0;
         aad->return_point[i] = 0;
         aad->loop_counter[i] = 0;
-        aad->pointer[i] = segment + tmp1;
+        aad->pointer[i] = tmp1 + pointer_diff;
         aad->lie_late[i] = 0;
         j += 2;
     }

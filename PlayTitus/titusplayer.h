@@ -4,11 +4,7 @@
 
 #define ADLIB_DATA_COUNT 10
 #define ADLIB_INSTRUMENT_COUNT 19
-
-#define DATA_OFFSET 28677
-
-#define MUS_OFFSET (28677 - DATA_OFFSET)
-#define INS_OFFSET (29029 - DATA_OFFSET)
+#define ADLIB_SFX_COUNT 14
 
 typedef struct {
     unsigned char op[2][5]; //Two operators and five data settings 
@@ -46,7 +42,8 @@ typedef struct {
 
 } ADLIB_DATA;
 
-int load_data(ADLIB_DATA *aad, int len, int mus_offset, int ins_offset, int song_number);
+int load_data(ADLIB_DATA *aad, int song_number);
 int fillchip(ADLIB_DATA *aad);
+uint8_t getHeaderByte(uint16_t offset);
 
 #endif
