@@ -80,6 +80,7 @@ void loop() {
 
   while (1) {
     fillchip(&aad);
-    delay(13);
+    //75Hz, 13.33 ms interval
+    delayMicroseconds(13333);
   }
 }
