@@ -13,6 +13,8 @@
 #include "titusplayer.h"
 #define CURRENT_SONG_EEPROM_ADDRESS 0
 
+#define BUZZERPIN 6
+
 OPL2 opl2;
 ADLIB_DATA aad;
 
@@ -21,6 +23,9 @@ ADLIB_DATA aad;
 #define SOURCE_TTF
 //#define SOURCE_MOK
 //#define SOURCE_BB
+
+//OUTPUT_FORMAT output_format = BUZZER;
+OUTPUT_FORMAT output_format = ADLIB;
 
 //Songs: 0-15 (BB: 0-3)
 
@@ -56,6 +61,12 @@ uint8_t getHeaderByte(uint16_t offset)
   return pgm_read_byte_near(DATA_ARRAY + offset);
 }
 
+void playBuzzerFreq(uint16_t freq)
+{
+  if (freq == 0) noTone(BUZZERPIN);
+  else tone(BUZZERPIN, freq);
+}
+
 
 
 void setup() {
@@ -73,10 +84,18 @@ void setup() {
   #endif
 
   song %= SONG_COUNT;
+
+  if (output_format == BUZZER)
+  {
+    load_data_buzzer(&aad, song);
+  }
+  else
+  {
+    load_data(&aad, song);
+  }
 }
 
 void loop() {
-  load_data(&aad, song);
 
   while (1) {
     fillchip(&aad);

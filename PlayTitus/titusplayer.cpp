@@ -23,7 +23,8 @@ extern OPL2 opl2;
 const unsigned char opera[] = {0,0,1,2,3,4,5,8,9,0xA,0xB,0xC,0xD,0x10,0x11,0x12,0x13,0x14,0x15};
 const unsigned char voxp[] = {1,2,3,7,8,9,13,17,15,18,14};
 const unsigned int gamme[] = {343,363,385,408,432,458,485,514,544,577,611,647,0};
-
+const unsigned int bgamme[] = {36485,34437,32505,30680,28959,27333,25799,24351,22984,21694,20477,19327,10};
+const unsigned char btempo[] = {4,6,6,10,8,3,0,0,6,0,10,2,3,3,0,0};
 
 uint16_t MUS_OFFSET, INS_OFFSET, SFX_OFFSET, BUZ_OFFSET;
 uint8_t SONG_COUNT, SFX_COUNT;
@@ -60,6 +61,12 @@ int loadint16(unsigned char c1, unsigned char c2){
     return (int)tmpint;
 }
 
+void setBuzzerFreqFromDivider(unsigned int divider)
+{
+    double temp = (double)1193182 / (double)divider;
+    playBuzzerFreq((unsigned int)temp);
+}
+
 int fillchip(ADLIB_DATA *aad)
 {
     int i;
@@ -75,8 +82,14 @@ int fillchip(ADLIB_DATA *aad)
         return (aad->cutsong); //Skip (for modifying tempo)
     }
     for (i = 0; i < ADLIB_DATA_COUNT; i++) {
+        if (output_format == BUZZER && i != 0) break;
         if (aad->pointer[i] == 0) continue;
         if (aad->delay_counter[i] > 1) {
+            if (aad->delay_counter[i] == 2 && output_format == BUZZER && aad->lie[i] != 1)
+            {
+                setBuzzerFreqFromDivider(15000);
+            }
+            
             aad->delay_counter[i]--;
             continue;
         }
@@ -94,6 +107,12 @@ int fillchip(ADLIB_DATA *aad)
 
             case 1: //Change volume
                 aad->volume[i] = freq;
+                if (output_format == BUZZER)
+                {
+                    //printf("\nVolume on buzzer...\n");
+                    break;
+                }
+                
                 tmpC = aad->instrument[i]->op[0][2];
                 tmpC = (tmpC & 0x3F) - 63;
 
@@ -123,6 +142,11 @@ int fillchip(ADLIB_DATA *aad)
                 break;
 
             case 6: //Change instrument
+                if (output_format == BUZZER)
+                {
+                    //printf("\nIns on buzzer...\n");
+                    break;
+                }
                 if (freq == 1) { //Not melodic
                     aad->instrument[i] = &(aad->instrument_data[aad->octave[i] + 15]); //(1st perc instrument is the 16th instrument)
                     aad->vox[i] = aad->instrument[i]->vox;
@@ -202,7 +226,13 @@ int fillchip(ADLIB_DATA *aad)
         aad->freq[i] = freq;
 
         //Play note
-        if (gamme[aad->freq[i]] != 0) {
+        if (output_format == BUZZER)
+        {
+            if (freq == 12) playBuzzerFreq(0);
+            else setBuzzerFreqFromDivider(bgamme[freq] >> oct);
+        }
+        
+        else if (gamme[aad->freq[i]] != 0) {
             if (aad->instrument[i]->vox == 0xFE) { //Play a frequence
                 updatechip(0xA0 + aad->vox[i], (unsigned char)(gamme[aad->freq[i]] & 0xFF)); //Output lower 8 bits of frequence
                 if (aad->lie_late[i] != 1) {
@@ -415,6 +445,55 @@ int load_data(ADLIB_DATA *aad, int song_number)
         aad->freq[i] = 0;
         aad->octave[i] = 0;
         aad->return_point[i] = 0;
+        aad->loop_counter[i] = 0;
+        aad->pointer[i] = tmp1 + pointer_diff;
+        aad->lie_late[i] = 0;
+        j += 2;
+    }
+}
+
+int load_data_buzzer(ADLIB_DATA *aad, int song_number)
+{
+    int i; //Index
+    int j; //Offset to the current offset
+    int k;
+    unsigned int tmp1; //Source offset
+    unsigned int tmp2; //Next offset
+
+    loadOpenTitusHeader();
+    aad->data_size = data_size;
+
+    //Set skip delay
+    if (AUDIOTYPE == 1) { //TTF/MOK
+        aad->skip_delay = btempo[song_number];
+        aad->skip_delay_counter = btempo[song_number];
+    } else if (AUDIOTYPE == 2) { //BB
+        aad->skip_delay = 0;
+        aad->skip_delay_counter = 0;
+    }
+
+    //Load music
+    j = BUZ_OFFSET + song_number * 2;
+
+    aad->cutsong = -1;
+    for (i = 0; i < 1 && (j < aad->data_size); i++) {
+        tmp1 = ((unsigned int)getByte(j) & 0xFF) + (((unsigned int)getByte(j + 1) << 8) & 0xFF00);
+        aad->cutsong++;
+        if (tmp1 == 0xFFFF) //Terminate for loop
+            break;
+
+        aad->duration[i] = 0;
+        aad->volume[i] = 0;
+        aad->tempo[i] = 0;
+        aad->triple_duration[i] = 0;
+        aad->lie[i] = 0;
+        aad->vox[i] = (unsigned char)i;
+        aad->instrument[i] = NULL;
+        //aad->instrument[i] = &(aad->instrument_data[0]);
+        aad->delay_counter[i] = 0;
+        aad->freq[i] = 0;
+        aad->octave[i] = 0;
+        aad->return_point[i] = NULL;
         aad->loop_counter[i] = 0;
         aad->pointer[i] = tmp1 + pointer_diff;
         aad->lie_late[i] = 0;

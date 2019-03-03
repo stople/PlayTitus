@@ -6,6 +6,9 @@
 #define ADLIB_INSTRUMENT_COUNT 19
 #define ADLIB_SFX_COUNT 14
 
+enum _OUTPUT_FORMAT{ADLIB, BUZZER};
+typedef enum _OUTPUT_FORMAT OUTPUT_FORMAT;
+
 typedef struct {
     unsigned char op[2][5]; //Two operators and five data settings 
     unsigned char fb_alg;
@@ -43,7 +46,12 @@ typedef struct {
 } ADLIB_DATA;
 
 int load_data(ADLIB_DATA *aad, int song_number);
+int load_data_buzzer(ADLIB_DATA *aad, int song_number);
 int fillchip(ADLIB_DATA *aad);
+
+//External
 uint8_t getHeaderByte(uint16_t offset);
+void playBuzzerFreq(uint16_t freq);
+extern OUTPUT_FORMAT output_format;
 
 #endif
